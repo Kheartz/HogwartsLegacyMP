@@ -1,0 +1,20 @@
+# Build
+build/
+out/
+
+# External downloads — document versions in ROADMAP.md instead
+UE4SS_v*/
+references/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+CMakeSettings.json
+
+# UE4SS logs generated in game dir (not in repo)
+*.log
+
+# OS
+Thumbs.db
+.DS_Store

@@ -1,0 +1,19 @@
+[project]
+name = "HogwartsLegacyMP"
+version = "0.1.0"
+description = "Hogwarts Legacy community multiplayer rebuild"
+channels = ["conda-forge"]
+platforms = ["win-64", "linux-64"]
+
+[dependencies]
+cmake = ">=3.28"
+ninja = ">=1.11"
+cxx-compiler = ">=1.7"
+
+[tasks]
+configure = { cmd = "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_POLICY_VERSION_MINIMUM=3.5", description = "Configure CMake" }
+build     = { cmd = "cmake --build build", depends-on = ["configure"], description = "Build all targets" }
+clean        = { cmd = "cmake --build build --target clean", description = "Clean build artifacts" }
+clean-build  = { cmd = "cmake -E remove_directory build && cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_POLICY_VERSION_MINIMUM=3.5 && cmake --build build", description = "Wipe build dir and rebuild from scratch" }
+server    = { cmd = "cmake -E env ./build/server/HogwartsServer", depends-on = ["build"], description = "Build and run the server" }
+test      = { cmd = "ctest --test-dir build --output-on-failure", depends-on = ["build"], description = "Run all tests" }
