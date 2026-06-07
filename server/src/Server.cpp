@@ -38,6 +38,14 @@ canvas { width: 100%; height: 300px; background: #080812; border: 1px solid #2a2
   </div>
   <div><canvas id="map"></canvas></div>
 </div>
+<div id="warp-panel" style="margin-top:14px;background:#12121f;border:1px solid #2a2a44;padding:10px 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+  <span style="color:#c8a84b;font-size:0.8em;text-transform:uppercase;letter-spacing:1px;">Warp</span>
+  <select id="warp-src" style="background:#1a1a30;color:#d0d0e8;border:1px solid #2a2a44;padding:4px 6px;font-family:monospace;font-size:0.82em;"></select>
+  <span style="color:#555;">&#8594;</span>
+  <select id="warp-tgt" style="background:#1a1a30;color:#d0d0e8;border:1px solid #2a2a44;padding:4px 6px;font-family:monospace;font-size:0.82em;"></select>
+  <button onclick="doWarp()" style="background:#c8a84b;color:#0d0d1a;border:none;padding:4px 14px;font-family:monospace;font-size:0.82em;cursor:pointer;">Warp</button>
+  <span id="warp-msg" style="color:#555;font-size:0.75em;"></span>
+</div>
 <div id="status">Connecting...</div>
 <script>
 const canvas = document.getElementById('map');
@@ -134,12 +142,42 @@ async function refresh() {
           '<td>' + p.age_ms + 'ms</td></tr>';
       }).join('');
     }
+    populateSelects();
     draw();
     document.getElementById('status').textContent =
       'Updated ' + new Date().toLocaleTimeString() + ' — ' + players.length + ' player(s)';
   } catch (e) {
     document.getElementById('status').textContent = 'Connection error: ' + e.message;
     draw();
+  }
+}
+
+function populateSelects() {
+  const src = document.getElementById('warp-src');
+  const tgt = document.getElementById('warp-tgt');
+  const sv = src.value, tv = tgt.value;
+  const opts = players.map(p => '<option value="' + p.id + '">P' + p.id + '</option>').join('');
+  src.innerHTML = opts;
+  tgt.innerHTML = opts;
+  if (sv) src.value = sv;
+  if (tv) tgt.value = tv;
+}
+
+async function doWarp() {
+  const src = document.getElementById('warp-src').value;
+  const tgt = document.getElementById('warp-tgt').value;
+  const msg = document.getElementById('warp-msg');
+  if (!src || !tgt) { msg.textContent = 'No players connected.'; return; }
+  if (src === tgt)  { msg.textContent = 'Source = target.';      return; }
+  try {
+    // src (left) is the player who moves; tgt (right) provides the destination position
+    const r = await fetch('/api/warp?target_id=' + src + '&source_id=' + tgt, { method: 'POST' });
+    const j = await r.json();
+    msg.textContent = j.ok ? 'Warped P' + src + ' to P' + tgt : (j.error || 'Error');
+    msg.style.color = j.ok ? '#4a4' : '#a44';
+  } catch(e) {
+    msg.textContent = 'Error: ' + e.message;
+    msg.style.color = '#a44';
   }
 }
 
@@ -199,6 +237,17 @@ void Server::run()
                 break;
             }
         }
+
+        // Drain warp commands queued by the HTTP thread
+        {
+            std::lock_guard<std::mutex> lk(m_warp_mutex);
+            while (!m_warp_queue.empty())
+            {
+                auto cmd = m_warp_queue.front();
+                m_warp_queue.pop();
+                send_warp(cmd.target_id, cmd.x, cmd.y, cmd.z);
+            }
+        }
     }
 }
 
@@ -229,6 +278,7 @@ void Server::on_disconnect(ENetPeer* peer)
         {
             std::lock_guard lock(m_mutex);
             m_players.erase(*id_ptr);
+            m_peers.erase(*id_ptr);
         }
         delete id_ptr;
         peer->data = nullptr;
@@ -269,9 +319,7 @@ void Server::on_packet(ENetPeer* peer, ENetPacket* packet)
             // Track which player_id this peer owns
             if (auto* id_ptr = static_cast<uint32_t*>(peer->data))
                 *id_ptr = msg->player_id;
-
-            printf("[server] PlayerMove id=%u  X=%.1f Y=%.1f Z=%.1f Yaw=%.1f\n",
-                msg->player_id, msg->x, msg->y, msg->z, msg->yaw);
+            m_peers[msg->player_id] = peer;
 
             // Broadcast to every other connected peer
             for (size_t i = 0; i < m_host->peerCount; ++i)
@@ -292,6 +340,24 @@ void Server::on_packet(ENetPeer* peer, ENetPacket* packet)
         printf("[server] Unknown opcode 0x%02x\n", static_cast<uint8_t>(header->opcode));
         break;
     }
+}
+
+void Server::send_warp(uint32_t target_id, float x, float y, float z)
+{
+    auto it = m_peers.find(target_id);
+    if (it == m_peers.end()) return;
+
+    ENetPeer* peer = it->second;
+    if (peer->state != ENET_PEER_STATE_CONNECTED) return;
+
+    MsgWarp msg{};
+    msg.header.opcode = Opcode::Warp;
+    msg.x = x; msg.y = y; msg.z = z;
+
+    ENetPacket* pkt = enet_packet_create(&msg, sizeof(msg), ENET_PACKET_FLAG_RELIABLE);
+    enet_peer_send(peer, 0, pkt);
+    enet_host_flush(m_host);
+    printf("[server] Warped P%u to %.0f,%.0f,%.0f\n", target_id, x, y, z);
 }
 
 void Server::start_http(uint16_t http_port)
@@ -330,6 +396,54 @@ void Server::start_http(uint16_t http_port)
 
             res.set_header("Access-Control-Allow-Origin", "*");
             res.set_content(json, "application/json");
+        });
+
+        // POST /api/warp?target_id=10&source_id=1
+        // Warps target to source's current position.
+        svr.Post("/api/warp", [this](const httplib::Request& req, httplib::Response& res)
+        {
+            auto target_str = req.get_param_value("target_id");
+            auto source_str = req.get_param_value("source_id");
+
+            if (target_str.empty() || source_str.empty())
+            {
+                res.status = 400;
+                res.set_content(R"({"error":"missing target_id or source_id"})", "application/json");
+                return;
+            }
+
+            auto target_id = static_cast<uint32_t>(std::atoi(target_str.c_str()));
+            auto source_id = static_cast<uint32_t>(std::atoi(source_str.c_str()));
+
+            float x, y, z;
+            {
+                std::lock_guard lock(m_mutex);
+                auto src = m_players.find(source_id);
+                auto tgt = m_players.find(target_id);
+                if (src == m_players.end())
+                {
+                    res.status = 404;
+                    res.set_content(R"({"error":"source not found"})", "application/json");
+                    return;
+                }
+                if (tgt == m_players.end())
+                {
+                    res.status = 404;
+                    res.set_content(R"({"error":"target not found"})", "application/json");
+                    return;
+                }
+                x = src->second.x;
+                y = src->second.y;
+                z = src->second.z;
+            }
+
+            {
+                std::lock_guard lk(m_warp_mutex);
+                m_warp_queue.push({target_id, x, y, z});
+            }
+
+            res.set_header("Access-Control-Allow-Origin", "*");
+            res.set_content(R"({"ok":true})", "application/json");
         });
 
         printf("[dashboard] HTTP dashboard on http://localhost:%u/\n", http_port);

@@ -48,3 +48,34 @@ TEST_CASE("MsgHeartbeat size", "[protocol]")
 {
     REQUIRE(sizeof(MsgHeartbeat) == 1);
 }
+
+TEST_CASE("Warp opcode value", "[protocol]")
+{
+    REQUIRE(static_cast<uint8_t>(Opcode::Warp) == 0x20);
+}
+
+TEST_CASE("MsgWarp is packed with no padding", "[protocol]")
+{
+    // opcode(1) + x(4) + y(4) + z(4) = 13 bytes
+    REQUIRE(sizeof(MsgWarp) == 13);
+}
+
+TEST_CASE("MsgWarp serializes and deserializes correctly", "[protocol]")
+{
+    MsgWarp msg{};
+    msg.header.opcode = Opcode::Warp;
+    msg.x = 396000.0f;
+    msg.y = -520000.0f;
+    msg.z = -82000.0f;
+
+    uint8_t buf[sizeof(MsgWarp)];
+    std::memcpy(buf, &msg, sizeof(msg));
+
+    MsgWarp out{};
+    std::memcpy(&out, buf, sizeof(out));
+
+    REQUIRE(out.header.opcode == Opcode::Warp);
+    REQUIRE(out.x == msg.x);
+    REQUIRE(out.y == msg.y);
+    REQUIRE(out.z == msg.z);
+}

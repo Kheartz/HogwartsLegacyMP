@@ -10,6 +10,7 @@ enum class Opcode : uint8_t
     Disconnect = 0x02,
     Heartbeat  = 0x03,
     PlayerMove = 0x10,
+    Warp       = 0x20,
 };
 
 struct MsgHeader
@@ -28,6 +29,13 @@ struct MsgPlayerMove
 struct MsgHeartbeat
 {
     MsgHeader header;
+};
+
+// Server → client/bot: teleport to position
+struct MsgWarp
+{
+    MsgHeader header;
+    float     x, y, z;
 };
 
 #pragma pack(pop)

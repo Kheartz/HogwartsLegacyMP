@@ -6,6 +6,7 @@ add_executable(HogwartsTests
 target_link_libraries(HogwartsTests PRIVATE
     shared
     enet
+    httplib::httplib
     Catch2::Catch2WithMain
 )
 

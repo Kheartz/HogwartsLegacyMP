@@ -6,6 +6,8 @@ local SERVER_PORT = 7777
 local PLAYER_ID   = 1   -- change to 2 on the second client for local two-client testing
 local SEND_RATE   = 0.1 -- seconds between position updates
 
+local UEHelpers = require("UEHelpers")
+
 local net       = nil
 local connected = false
 
@@ -65,8 +67,9 @@ end
 --             = false  (spawn previously failed — don't retry)
 -- ---------------------------------------------------------------------------
 
-local proxies        = {}
-local remote_targets = {}  -- id -> {x, y, z, yaw} last received position
+local proxies        = {}   -- id -> actor, or false if spawn previously failed
+local remote_targets = {}   -- id -> {x, y, z, yaw} last received position
+local log_ticks      = {}   -- id -> tick count for 1-Hz logging
 
 local GS        = nil  -- UGameplayStatics CDO
 local SMA_Class = nil  -- StaticMeshActor class
@@ -130,16 +133,14 @@ local function cleanup_proxies()
 end
 
 local function on_remote_move(id, x, y, z, yaw)
+    -- Proxy actor spawning is pending a working UE4SS spawn API.
+    -- Log at 1Hz (every 10 ticks) so we can confirm the broadcast pipeline works.
     remote_targets[id] = {x=x, y=y, z=z, yaw=yaw}
-
-    if proxies[id] == nil then
-        proxies[id] = spawn_proxy(id, x, y, z, yaw)
-    elseif proxies[id] ~= false then
-        if proxies[id]:IsValid() then
-            update_proxy(proxies[id], x, y, z, yaw)
-        else
-            proxies[id] = nil  -- actor was destroyed externally; try again next tick
-        end
+    local ticks = (proxies[id] or 0) + 1
+    proxies[id] = ticks
+    if ticks == 1 or ticks % 10 == 0 then
+        print(string.format("[HogwartsMP] Remote P%d  X=%.0f Y=%.0f Z=%.0f Yaw=%.1f",
+            id, x, y, z, yaw))
     end
 end
 
@@ -164,7 +165,8 @@ end
 local function disconnect()
     if net then net.disconnect() end
     connected = false
-    cleanup_proxies()
+    proxies = {}
+    remote_targets = {}
     print("[HogwartsMP] Disconnected.")
 end
 
@@ -176,24 +178,44 @@ end
 local loop_started = false
 
 local function send_loop()
-    if connected and net then
-        -- Process incoming packets and update remote proxies
-        local events = net.poll()
-        for _, evt in ipairs(events) do
-            if evt.player_id ~= PLAYER_ID then
-                on_remote_move(evt.player_id, evt.x, evt.y, evt.z, evt.yaw)
+    -- Top-level pcall so any error logs and the loop keeps rescheduling.
+    local ok, err = pcall(function()
+        if connected and net then
+            local events = net.poll() or {}
+            for _, evt in ipairs(events) do
+                if evt.type == "warp" then
+                    local pawn = get_pawn()
+                    if pawn then
+                        local wok, werr = pcall(function()
+                            pawn:K2_SetActorLocation({X=evt.x, Y=evt.y, Z=evt.z}, false, {}, false)
+                        end)
+                        if wok then
+                            print(string.format("[HogwartsMP] Warped to %.0f, %.0f, %.0f", evt.x, evt.y, evt.z))
+                        else
+                            print("[HogwartsMP] Warp failed: " .. tostring(werr))
+                        end
+                    end
+                elseif evt.player_id and evt.player_id ~= PLAYER_ID then
+                    local rok, rerr = pcall(on_remote_move,
+                        evt.player_id, evt.x, evt.y, evt.z, evt.yaw)
+                    if not rok then
+                        print("[HogwartsMP] remote move error: " .. tostring(rerr))
+                    end
+                end
             end
-        end
 
-        -- Send local position
-        local pawn = get_pawn()
-        if pawn then
-            local lok, loc = pcall(function() return pawn:K2_GetActorLocation() end)
-            local rok, rot = pcall(function() return pawn:K2_GetActorRotation() end)
-            if lok and loc and rok and rot then
-                net.send_position(PLAYER_ID, loc.X, loc.Y, loc.Z, rot.Yaw)
+            local pawn = get_pawn()
+            if pawn then
+                local lok, loc = pcall(function() return pawn:K2_GetActorLocation() end)
+                local rok, rot = pcall(function() return pawn:K2_GetActorRotation() end)
+                if lok and loc and rok and rot then
+                    net.send_position(PLAYER_ID, loc.X, loc.Y, loc.Z, rot.Yaw)
+                end
             end
         end
+    end)
+    if not ok then
+        print("[HogwartsMP] send_loop error: " .. tostring(err))
     end
     ExecuteWithDelay(math.floor(SEND_RATE * 1000), send_loop)
 end

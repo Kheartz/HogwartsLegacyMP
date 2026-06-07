@@ -149,6 +149,16 @@ static int l_poll(lua_State* L)
                     lua_pushnumber(L,  msg->yaw);       lua_setfield(L, -2, "yaw");
                     lua_rawseti(L, -2, ++count);
                 }
+                else if (hdr->opcode == Opcode::Warp && len >= sizeof(MsgWarp))
+                {
+                    const auto* msg = reinterpret_cast<const MsgWarp*>(data);
+                    lua_newtable(L);
+                    lua_pushstring(L, "warp");  lua_setfield(L, -2, "type");
+                    lua_pushnumber(L, msg->x);  lua_setfield(L, -2, "x");
+                    lua_pushnumber(L, msg->y);  lua_setfield(L, -2, "y");
+                    lua_pushnumber(L, msg->z);  lua_setfield(L, -2, "z");
+                    lua_rawseti(L, -2, ++count);
+                }
             }
             enet_packet_destroy(event.packet);
         }
