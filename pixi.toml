@@ -17,3 +17,4 @@ clean        = { cmd = "cmake --build build --target clean", description = "Clea
 clean-build  = { cmd = "cmake -E remove_directory build && cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_POLICY_VERSION_MINIMUM=3.5 && cmake --build build", description = "Wipe build dir and rebuild from scratch" }
 server    = { cmd = "cmake -E env ./build/server/HogwartsServer", depends-on = ["build"], description = "Build and run the server" }
 test      = { cmd = "ctest --test-dir build --output-on-failure", depends-on = ["build"], description = "Run all tests" }
+bot       = { cmd = "cmake -E env ./build/tools/bot/HogwartsBot", depends-on = ["build"], description = "Run bot (requires tools/bot/ locally — see tools/bot/src/main.cpp)" }

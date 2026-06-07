@@ -272,6 +272,19 @@ void Server::on_packet(ENetPeer* peer, ENetPacket* packet)
 
             printf("[server] PlayerMove id=%u  X=%.1f Y=%.1f Z=%.1f Yaw=%.1f\n",
                 msg->player_id, msg->x, msg->y, msg->z, msg->yaw);
+
+            // Broadcast to every other connected peer
+            for (size_t i = 0; i < m_host->peerCount; ++i)
+            {
+                ENetPeer* other = &m_host->peers[i];
+                if (other != peer && other->state == ENET_PEER_STATE_CONNECTED)
+                {
+                    ENetPacket* fwd = enet_packet_create(
+                        packet->data, packet->dataLength, ENET_PACKET_FLAG_UNSEQUENCED);
+                    enet_peer_send(other, 0, fwd);
+                }
+            }
+            enet_host_flush(m_host);
         }
         break;
 

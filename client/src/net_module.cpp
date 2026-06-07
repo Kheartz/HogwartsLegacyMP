@@ -116,22 +116,44 @@ static int l_disconnect(lua_State* L)
     return 1;
 }
 
-// net.poll() — call each tick to process incoming events
+// net.poll() -> array of {player_id, x, y, z, yaw} tables for received PlayerMove packets
 static int l_poll(lua_State* L)
 {
-    if (!g_host) return 0;
+    lua_newtable(L);
+    if (!g_host) return 1;
+
+    int count = 0;
     ENetEvent event{};
-    enet_host_service(g_host, &event, 0);
-    if (event.type == ENET_EVENT_TYPE_DISCONNECT)
+    while (enet_host_service(g_host, &event, 0) > 0)
     {
-        printf("[HogwartsMPNet] Disconnected from server.\n");
-        g_peer = nullptr;
+        if (event.type == ENET_EVENT_TYPE_DISCONNECT)
+        {
+            printf("[HogwartsMPNet] Disconnected from server.\n");
+            g_peer = nullptr;
+        }
+        else if (event.type == ENET_EVENT_TYPE_RECEIVE)
+        {
+            auto* data = event.packet->data;
+            auto  len  = event.packet->dataLength;
+            if (len >= sizeof(MsgHeader))
+            {
+                const auto* hdr = reinterpret_cast<const MsgHeader*>(data);
+                if (hdr->opcode == Opcode::PlayerMove && len >= sizeof(MsgPlayerMove))
+                {
+                    const auto* msg = reinterpret_cast<const MsgPlayerMove*>(data);
+                    lua_newtable(L);
+                    lua_pushinteger(L, msg->player_id); lua_setfield(L, -2, "player_id");
+                    lua_pushnumber(L,  msg->x);         lua_setfield(L, -2, "x");
+                    lua_pushnumber(L,  msg->y);         lua_setfield(L, -2, "y");
+                    lua_pushnumber(L,  msg->z);         lua_setfield(L, -2, "z");
+                    lua_pushnumber(L,  msg->yaw);       lua_setfield(L, -2, "yaw");
+                    lua_rawseti(L, -2, ++count);
+                }
+            }
+            enet_packet_destroy(event.packet);
+        }
     }
-    else if (event.type == ENET_EVENT_TYPE_RECEIVE)
-    {
-        enet_packet_destroy(event.packet);
-    }
-    return 0;
+    return 1;
 }
 
 static const luaL_Reg net_funcs[] = {

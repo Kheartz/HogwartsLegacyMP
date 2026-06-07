@@ -54,3 +54,9 @@ if(WIN32)
 endif()
 
 enable_testing()
+
+# Local dev tools — not committed to the repo.
+# Create tools/bot/ locally to get the bot runner; silently skipped otherwise.
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/bot/CMakeLists.txt)
+    add_subdirectory(tools/bot)
+endif()

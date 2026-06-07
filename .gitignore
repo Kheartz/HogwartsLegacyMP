@@ -15,6 +15,9 @@ CMakeSettings.json
 # UE4SS logs generated in game dir (not in repo)
 *.log
 
+# Local dev tools (not shipped — add tools/bot/ locally to use the bot runner)
+tools/
+
 # OS
 Thumbs.db
 .DS_Store
