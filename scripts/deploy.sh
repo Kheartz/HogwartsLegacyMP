@@ -22,17 +22,16 @@ if [[ "${1:-}" == "--ue4ss" || "${1:-}" == "--all" || $# -eq 0 ]]; then
 fi
 
 # ── Client DLL ─────────────────────────────────────────────────────────────
-# Uncomment when the client DLL build exists:
-# CLIENT_DLL="$REPO_ROOT/build/HogwartsMP.dll"
-# if [[ "${1:-}" == "--client" || "${1:-}" == "--all" ]]; then
-#     if [[ ! -f "$CLIENT_DLL" ]]; then
-#         echo "[client] ERROR: $CLIENT_DLL not found. Build first."
-#         exit 1
-#     fi
-#     echo "[client] Copying HogwartsMP.dll..."
-#     cp "$CLIENT_DLL" "$GAME_DIR/HogwartsMP.dll"
-#     echo "[client] Done."
-# fi
+CLIENT_DLL="$REPO_ROOT/build/client/HogwartsMPNet.dll"
+if [[ "${1:-}" == "--client" || "${1:-}" == "--all" ]]; then
+    if [[ ! -f "$CLIENT_DLL" ]]; then
+        echo "[client] ERROR: $CLIENT_DLL not found. Run 'pixi run build' first."
+        exit 1
+    fi
+    echo "[client] Copying HogwartsMPNet.dll..."
+    cp "$CLIENT_DLL" "$GAME_DIR/HogwartsMPNet.dll"
+    echo "[client] Done."
+fi
 
 # ── Lua Mods (UE4SS scripts) ───────────────────────────────────────────────
 MODS_SRC="$REPO_ROOT/mods"
