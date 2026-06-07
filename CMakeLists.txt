@@ -23,11 +23,17 @@ FetchContent_Declare(
 )
 
 FetchContent_Declare(
+    httplib
+    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+    GIT_TAG        v0.15.3
+)
+
+FetchContent_Declare(
     lua
     GIT_REPOSITORY https://github.com/lua/lua.git
     GIT_TAG        v5.4.7
 )
-FetchContent_MakeAvailable(Catch2 lua)
+FetchContent_MakeAvailable(Catch2 lua httplib)
 
 # Lua doesn't have a CMakeLists — build it as a static lib manually
 file(GLOB LUA_SOURCES ${lua_SOURCE_DIR}/*.c)

@@ -4,7 +4,9 @@ add_executable(HogwartsServer
     src/Server.h
 )
 
-target_link_libraries(HogwartsServer PRIVATE shared enet)
+find_package(Threads REQUIRED)
+
+target_link_libraries(HogwartsServer PRIVATE shared enet httplib::httplib Threads::Threads)
 target_include_directories(HogwartsServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 if(WIN32)

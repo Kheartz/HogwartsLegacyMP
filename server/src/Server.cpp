@@ -1,7 +1,155 @@
 #include "Server.h"
 #include "Protocol.h"
+#include <httplib.h>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
+#include <cinttypes>
+
+// ---------------------------------------------------------------------------
+// Embedded dashboard — served at http://localhost:8080/
+// ---------------------------------------------------------------------------
+static const char* DASHBOARD_HTML = R"html(<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>HogwartsLegacyMP Dashboard</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0d0d1a; color: #d0d0e8; font-family: monospace; padding: 20px; }
+h1 { color: #c8a84b; font-size: 1.1em; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 16px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+table { width: 100%; border-collapse: collapse; background: #12121f; border: 1px solid #2a2a44; }
+th { background: #1a1a30; color: #c8a84b; padding: 8px 10px; font-size: 0.8em; text-align: left; border-bottom: 1px solid #2a2a44; }
+td { padding: 7px 10px; border-top: 1px solid #1a1a2e; font-size: 0.82em; font-variant-numeric: tabular-nums; }
+tr.stale td { color: #44445a; }
+canvas { width: 100%; height: 300px; background: #080812; border: 1px solid #2a2a44; display: block; }
+#status { margin-top: 10px; color: #44445a; font-size: 0.72em; }
+</style>
+</head>
+<body>
+<h1>HogwartsLegacyMP &mdash; Server Dashboard</h1>
+<div class="grid">
+  <div>
+    <table>
+      <thead><tr><th>Player</th><th>X</th><th>Y</th><th>Z</th><th>Yaw</th><th>Age</th></tr></thead>
+      <tbody id="tbody"><tr><td colspan="6" style="color:#44445a;text-align:center;padding:16px">No players connected</td></tr></tbody>
+    </table>
+  </div>
+  <div><canvas id="map"></canvas></div>
+</div>
+<div id="status">Connecting...</div>
+<script>
+const canvas = document.getElementById('map');
+const ctx = canvas.getContext('2d');
+let players = [];
+
+function resize() { canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight; }
+window.addEventListener('resize', () => { resize(); draw(); });
+resize();
+
+function toCanvas(x, y, x0, y0, xr, yr) {
+  const pad = 28;
+  return [
+    pad + (x - x0) / xr * (canvas.width  - pad * 2),
+    pad + (1 - (y - y0) / yr) * (canvas.height - pad * 2)
+  ];
+}
+
+function draw() {
+  const W = canvas.width, H = canvas.height;
+  ctx.fillStyle = '#080812';
+  ctx.fillRect(0, 0, W, H);
+
+  if (!players.length) {
+    ctx.fillStyle = '#2a2a44';
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('No players connected', W / 2, H / 2);
+    return;
+  }
+
+  const pad = 28, margin = 2000;
+  const xs = Math.min(...players.map(p => p.x)) - margin;
+  const xe = Math.max(...players.map(p => p.x)) + margin;
+  const ys = Math.min(...players.map(p => p.y)) - margin;
+  const ye = Math.max(...players.map(p => p.y)) + margin;
+  const xr = (xe - xs) || 1;
+  const yr = (ye - ys) || 1;
+
+  // Grid lines
+  ctx.strokeStyle = '#10102a';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 8; i++) {
+    const gx = pad + i * (W - pad * 2) / 8;
+    const gy = pad + i * (H - pad * 2) / 8;
+    ctx.beginPath(); ctx.moveTo(gx, pad); ctx.lineTo(gx, H - pad); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(pad, gy); ctx.lineTo(W - pad, gy); ctx.stroke();
+  }
+
+  players.forEach(p => {
+    const stale = p.age_ms > 2000;
+    const [cx, cy] = toCanvas(p.x, p.y, xs, ys, xr, yr);
+    const rad = p.yaw * Math.PI / 180;
+
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.sin(rad) * 16, cy - Math.cos(rad) * 16);
+    ctx.strokeStyle = stale ? '#333355' : '#e07030';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+    ctx.fillStyle = stale ? '#2a2a44' : '#c8a84b';
+    ctx.fill();
+    ctx.strokeStyle = stale ? '#44445a' : '#ffffff';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.fillStyle = stale ? '#44445a' : '#d0d0e8';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('P' + p.id, cx + 8, cy - 6);
+  });
+}
+
+async function refresh() {
+  try {
+    const r = await fetch('/api/players');
+    players = await r.json();
+
+    const tbody = document.getElementById('tbody');
+    if (!players.length) {
+      tbody.innerHTML = '<tr><td colspan="6" style="color:#44445a;text-align:center;padding:16px">No players connected</td></tr>';
+    } else {
+      tbody.innerHTML = players.map(p => {
+        const stale = p.age_ms > 2000;
+        return '<tr class="' + (stale ? 'stale' : '') + '">' +
+          '<td>P' + p.id + '</td>' +
+          '<td>' + p.x.toFixed(0) + '</td>' +
+          '<td>' + p.y.toFixed(0) + '</td>' +
+          '<td>' + p.z.toFixed(0) + '</td>' +
+          '<td>' + p.yaw.toFixed(1) + '&deg;</td>' +
+          '<td>' + p.age_ms + 'ms</td></tr>';
+      }).join('');
+    }
+    draw();
+    document.getElementById('status').textContent =
+      'Updated ' + new Date().toLocaleTimeString() + ' — ' + players.length + ' player(s)';
+  } catch (e) {
+    document.getElementById('status').textContent = 'Connection error: ' + e.message;
+    draw();
+  }
+}
+
+refresh();
+setInterval(refresh, 500);
+</script>
+</body>
+</html>)html";
+
+// ---------------------------------------------------------------------------
 
 bool Server::init(uint16_t port, int max_clients)
 {
@@ -23,6 +171,8 @@ bool Server::init(uint16_t port, int max_clients)
     }
 
     printf("[server] Listening on port %u (max %d clients).\n", port, max_clients);
+
+    start_http(8080);
     return true;
 }
 
@@ -65,11 +215,24 @@ void Server::shutdown()
 void Server::on_connect(ENetPeer* peer)
 {
     printf("[server] Client connected: %u:%u\n", peer->address.host, peer->address.port);
-    peer->data = nullptr;
+    // Stash a heap-allocated player_id so we can remove it on disconnect.
+    // Set to 0 (unknown) until the first PlayerMove arrives.
+    peer->data = new uint32_t(0);
 }
 
 void Server::on_disconnect(ENetPeer* peer)
 {
+    auto* id_ptr = static_cast<uint32_t*>(peer->data);
+    if (id_ptr)
+    {
+        if (*id_ptr != 0)
+        {
+            std::lock_guard lock(m_mutex);
+            m_players.erase(*id_ptr);
+        }
+        delete id_ptr;
+        peer->data = nullptr;
+    }
     printf("[server] Client disconnected: %u:%u\n", peer->address.host, peer->address.port);
 }
 
@@ -83,13 +246,30 @@ void Server::on_packet(ENetPeer* peer, ENetPacket* packet)
     switch (header->opcode)
     {
     case Opcode::Heartbeat:
-        printf("[server] Heartbeat from %u:%u\n", peer->address.host, peer->address.port);
+        // Heartbeats are silent — they just keep the connection alive.
         break;
 
     case Opcode::PlayerMove:
         if (packet->dataLength >= sizeof(MsgPlayerMove))
         {
             const auto* msg = reinterpret_cast<const MsgPlayerMove*>(packet->data);
+
+            // Update state map
+            {
+                std::lock_guard lock(m_mutex);
+                auto& p = m_players[msg->player_id];
+                p.id       = msg->player_id;
+                p.x        = msg->x;
+                p.y        = msg->y;
+                p.z        = msg->z;
+                p.yaw      = msg->yaw;
+                p.last_seen = std::chrono::steady_clock::now();
+            }
+
+            // Track which player_id this peer owns
+            if (auto* id_ptr = static_cast<uint32_t*>(peer->data))
+                *id_ptr = msg->player_id;
+
             printf("[server] PlayerMove id=%u  X=%.1f Y=%.1f Z=%.1f Yaw=%.1f\n",
                 msg->player_id, msg->x, msg->y, msg->z, msg->yaw);
         }
@@ -99,4 +279,48 @@ void Server::on_packet(ENetPeer* peer, ENetPacket* packet)
         printf("[server] Unknown opcode 0x%02x\n", static_cast<uint8_t>(header->opcode));
         break;
     }
+}
+
+void Server::start_http(uint16_t http_port)
+{
+    m_http_thread = std::thread([this, http_port]()
+    {
+        httplib::Server svr;
+
+        svr.Get("/", [](const httplib::Request&, httplib::Response& res)
+        {
+            res.set_content(DASHBOARD_HTML, "text/html");
+        });
+
+        svr.Get("/api/players", [this](const httplib::Request&, httplib::Response& res)
+        {
+            auto now = std::chrono::steady_clock::now();
+            std::string json = "[";
+            bool first = true;
+
+            std::lock_guard lock(m_mutex);
+            for (auto& [id, p] : m_players)
+            {
+                if (!first) json += ",";
+                first = false;
+
+                auto age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - p.last_seen).count();
+
+                char buf[256];
+                std::snprintf(buf, sizeof(buf),
+                    "{\"id\":%u,\"x\":%.1f,\"y\":%.1f,\"z\":%.1f,\"yaw\":%.1f,\"age_ms\":%" PRId64 "}",
+                    p.id, p.x, p.y, p.z, p.yaw, static_cast<int64_t>(age_ms));
+                json += buf;
+            }
+            json += "]";
+
+            res.set_header("Access-Control-Allow-Origin", "*");
+            res.set_content(json, "application/json");
+        });
+
+        printf("[dashboard] HTTP dashboard on http://localhost:%u/\n", http_port);
+        svr.listen("0.0.0.0", static_cast<int>(http_port));
+    });
+    m_http_thread.detach();
 }

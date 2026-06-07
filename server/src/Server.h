@@ -1,6 +1,16 @@
 #pragma once
 #include <enet/enet.h>
 #include <cstdint>
+#include <chrono>
+#include <mutex>
+#include <thread>
+#include <unordered_map>
+
+struct PlayerState {
+    uint32_t id  = 0;
+    float    x   = 0, y = 0, z = 0, yaw = 0;
+    std::chrono::steady_clock::time_point last_seen{};
+};
 
 class Server
 {
@@ -13,6 +23,11 @@ private:
     void on_connect(ENetPeer* peer);
     void on_disconnect(ENetPeer* peer);
     void on_packet(ENetPeer* peer, ENetPacket* packet);
+    void start_http(uint16_t http_port);
 
     ENetHost* m_host = nullptr;
+
+    std::mutex                                m_mutex;
+    std::unordered_map<uint32_t, PlayerState> m_players;
+    std::thread                               m_http_thread;
 };
